@@ -1,6 +1,7 @@
 name: pr
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - "pull-request/[0-9]+"
