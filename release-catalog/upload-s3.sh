@@ -61,7 +61,7 @@ if [[ -n "${RELEASE_CANDIDATE_PREFIX}" ]]; then
 fi
 # Upload exactly the files the companion declares: the entries document, each
 # artifact, and each artifact's evidence files.
-mapfile -t companion_paths < <(jq -r '["release-catalog-entries.json"] + ([.entries[] | .path, .sbom, .provenance] | unique) | .[]' "${entries_path}")
+mapfile -t companion_paths < <(jq -r '["release-catalog-entries.json"] + ([.entries[] | .path, .sbom, .provenance, .signature? | strings] | unique) | .[]' "${entries_path}")
 head_metadata="$(mktemp)"
 trap 'rm -f "${head_metadata}"' EXIT
 

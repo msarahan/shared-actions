@@ -53,7 +53,7 @@ jq -e '
 ' "${entries_path}" >/dev/null
 
 # Mirror the S3 uploader's declared-file selection without requiring AWS.
-mapfile -t upload_paths < <(jq -r '["release-catalog-entries.json"] + ([.entries[] | .path, .sbom, .provenance] | unique) | .[]' "${entries_path}")
+mapfile -t upload_paths < <(jq -r '["release-catalog-entries.json"] + ([.entries[] | .path, .sbom, .provenance, .signature? | strings] | unique) | .[]' "${entries_path}")
 artifact_sha256="$(sha256sum "${canonical_bundle_directory}/cuvs-java-26.08.0.jar" | awk '{print $1}')"
 test "${upload_paths[*]}" = "release-catalog-entries.json cuvs-java-26.08.0.jar release-evidence/cuvs-java-26.08.0.jar.${artifact_sha256}.provenance.json release-evidence/cuvs-java-26.08.0.jar.${artifact_sha256}.sbom.cdx.json"
 
