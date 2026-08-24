@@ -518,6 +518,9 @@ jq -n -S \
   --arg run_id "${github_run_id}" \
   --arg sha "${source_sha}" \
   --arg workflow_ref "${github_workflow_ref}" \
+  --arg matrix_arch "${RELEASE_CANDIDATE_MATRIX_ARCH:-}" \
+  --arg matrix_cuda_version "${RELEASE_CANDIDATE_MATRIX_CUDA_VERSION:-}" \
+  --arg matrix_python_version "${RELEASE_CANDIDATE_MATRIX_PYTHON_VERSION:-}" \
   --argjson entries "$(jq -c '.entries' "${temporary_manifest}")" \
   '{
     schema_version: 1,
@@ -528,7 +531,12 @@ jq -n -S \
       sha: $sha,
       workflow_ref: $workflow_ref,
       run_id: $run_id,
-      run_attempt: $run_attempt
+      run_attempt: $run_attempt,
+      matrix: {
+        arch: $matrix_arch,
+        cuda_version: $matrix_cuda_version,
+        python_version: $matrix_python_version
+      }
     },
     entries: $entries
   }' >"${entries_path}"
