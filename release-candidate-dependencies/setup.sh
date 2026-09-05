@@ -245,14 +245,22 @@ fi
 # reusable release bytes plus an attempt-specific catalog/provenance envelope.
 # Resolve its bundle descriptors before downloading only the catalog envelopes
 # needed to choose build dependencies.
-aws s3 cp "${root}/" "${manifests}" --recursive --exclude '*' --include '*/bundle-reference.json'
+aws s3 cp "${root}/" "${manifests}" --recursive --exclude '*' --include '*/bundle-reference.*.json'
 shopt -s globstar nullglob
-reference_paths=("${manifests}"/**/bundle-reference.json)
+reference_paths=("${manifests}"/**/bundle-reference.*.json)
 declare -A selected_attempts=()
 declare -A selected_reference_paths=()
 for reference_path in "${reference_paths[@]}"; do
+  if ! jq -e '.schema_version == 4 and .storage_layout == 2' "${reference_path}" >/dev/null; then
+    echo "candidate train contains a reference that does not use storage layout 2" >&2
+    exit 1
+  fi
   source_repository="$(jq -r '.repository // empty' "${reference_path}")"
   source_artifact="$(jq -r '.source_artifact // empty' "${reference_path}")"
+  if [[ "${reference_path##*/}" != "bundle-reference.${source_artifact}.json" ]]; then
+    echo "candidate train contains a reference whose filename does not match its source artifact" >&2
+    exit 1
+  fi
   source_run_id="$(jq -r '.source_run_id // empty' "${reference_path}")"
   source_run_attempt="$(jq -r '.source_run_attempt // empty' "${reference_path}")"
   repository_name="${source_repository##*/}"
@@ -278,8 +286,8 @@ for reference_path in "${reference_paths[@]}"; do
     selected_attempts[${reference_identity}]="${source_run_attempt}"
     selected_reference_paths[${reference_identity}]="${reference_path}"
   fi
-  artifact_key="$(jq -r '.artifact_key // .content_key // empty' "${reference_path}")"
-  if [[ -z "${artifact_key}" || "${artifact_key}" != artifacts/* || "${artifact_key}" == *".."* ]]; then
+  artifact_key="$(jq -r '.artifact_key // empty' "${reference_path}")"
+  if [[ -z "${artifact_key}" || ! "${artifact_key}" =~ ^artifacts/[^/]+/[0-9a-f]{64}$ ]]; then
     echo "candidate train contains an unsafe artifact reference" >&2
     exit 1
   fi
@@ -289,11 +297,14 @@ for reference_path in "${reference_paths[@]}"; do
     exit 1
   fi
   bundle_key="$(jq -r '.bundle_key // empty' "${reference_path}")"
-  if [[ ( "${bundle_key}" != "${artifact_key}"/release-catalog-entries.json && "${bundle_key}" != "${train_key_prefix}"/*/release-catalog-entries.json ) || "${bundle_key}" == *".."* ]]; then
+  bundle_name="${bundle_key##*/}"
+  if [[ ! "${bundle_name}" =~ ^release-catalog-entries\.[A-Za-z0-9_-]+\.json$ ]] \
+    || [[ "${bundle_key}" != "${train_key_prefix}"/* ]] \
+    || [[ "${bundle_key}" == *".."* ]]; then
     echo "candidate train contains an unsafe catalog bundle reference" >&2
     exit 1
   fi
-  manifest_path="${reference_path%/bundle-reference.json}/release-catalog-entries.json"
+  manifest_path="${reference_path%/*}/${bundle_name}"
   aws s3 cp "s3://${RELEASE_CANDIDATE_BUCKET}/${bundle_key}" "${manifest_path}"
   jq \
     --arg artifact_key "${artifact_key}" \
@@ -317,7 +328,7 @@ fi
 
 # Shell globstar has a clear, portable meaning here and keeps the jq program
 # focused on schema fields rather than filesystem traversal.
-manifest_paths=("${manifests}"/**/release-catalog-entries.json)
+manifest_paths=("${manifests}"/**/release-catalog-entries.*.json)
 dependency_count="$(jq -r --arg target "${target_unit}" '
   (.release_units | map({key: .id, value: .}) | from_entries) as $units
   | def closure($id):
@@ -420,7 +431,7 @@ record_resolved_input() {
 while IFS= read -r selection; do
   artifact_key="$(jq -r '.artifact_key // empty' <<<"${selection}")"
   artifact_path="$(jq -r '.path' <<<"${selection}")"
-  if [[ -z "${artifact_key}" || "${artifact_key}" != artifacts/* || "${artifact_key}" == *".."* || "${artifact_path}" == /* || "${artifact_path}" == *".."* ]]; then
+  if [[ -z "${artifact_key}" || ! "${artifact_key}" =~ ^artifacts/[^/]+/[0-9a-f]{64}$ || "${artifact_path}" == /* || "${artifact_path}" == *".."* ]]; then
     echo "candidate catalog contains an unsafe dependency location" >&2
     exit 1
   fi
@@ -577,15 +588,23 @@ fi
   cat <<'EOF'
 artifact_name="${1:?artifact name is required}"
 destination="${RAPIDS_UNZIP_DIR:-$(mktemp -d)}"
-reference_root="${RELEASE_CANDIDATE_DEPENDENCY_MANIFESTS:?candidate dependency manifests are required}/${GITHUB_REPOSITORY}/${artifact_name}"
-mapfile -t references < <(find "${reference_root}" -type f -name bundle-reference.json -print | sort)
+reference_root="${RELEASE_CANDIDATE_DEPENDENCY_MANIFESTS:?candidate dependency manifests are required}/${GITHUB_REPOSITORY}"
+mapfile -t references < <(
+  find "${reference_root}" -type f -name 'bundle-reference.*.json' -print \
+    | while IFS= read -r reference; do
+        if [[ "$(jq -r '.source_artifact // empty' "${reference}")" == "${artifact_name}" ]]; then
+          printf '%s\n' "${reference}"
+        fi
+      done \
+    | sort
+)
 if [[ "${#references[@]}" -ne 1 ]]; then
   echo "candidate artifact must have exactly one selected train reference: ${artifact_name}" >&2
   exit 1
 fi
 reference="${references[0]}"
-artifact_key="$(jq -r '.artifact_key // .content_key // empty' "${reference}")"
-if [[ -z "${artifact_key}" || "${artifact_key}" != artifacts/* || "${artifact_key}" == *".."* ]]; then
+artifact_key="$(jq -r '.artifact_key // empty' "${reference}")"
+if [[ -z "${artifact_key}" || ! "${artifact_key}" =~ ^artifacts/[^/]+/[0-9a-f]{64}$ ]]; then
   echo "candidate artifact has an unsafe artifact reference: ${artifact_name}" >&2
   exit 1
 fi

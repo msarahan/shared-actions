@@ -49,7 +49,7 @@ esac
 EOF
 chmod +x "${temporary_directory}/bin/aws"
 
-cat >"${temporary_directory}/bundle/release-catalog-entries.json" <<'EOF'
+cat >"${temporary_directory}/bundle/release-catalog-entries.conda.json" <<'EOF'
 {
   "schema_version": 1,
   "producer": "shared-workflows",
@@ -117,19 +117,19 @@ changed_implementation_revisions='{"gha-tools":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 run_upload 1 "${base_implementation_revisions}"
 artifact_root="${temporary_directory}/s3/candidate-store/artifacts/example"
 artifact_digest="$(find "${artifact_root}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)"
-canonical="${artifact_root}/${artifact_digest}/conda"
-train="${temporary_directory}/s3/candidate-store/train-state/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/example/conda"
+canonical="${artifact_root}/${artifact_digest}"
+train="${temporary_directory}/s3/candidate-store/train-state/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/example"
 test -f "${canonical}/artifact-index.json"
 test -f "${canonical}/linux-64/example-26.10.00.conda"
-test -f "${train}/101.1/release-catalog-entries.json"
-test -f "${train}/101.1/release-evidence/example.intoto.jsonl"
+test -f "${train}/101.1/${artifact_digest}/release-catalog-entries.conda.json"
+test -f "${train}/101.1/${artifact_digest}/release-evidence/example.intoto.jsonl"
 test ! -d "${artifact_root}/${artifact_digest}/attempts"
 jq -e '.upstream_dependencies == []' "${canonical}/build-record.json" >/dev/null
-jq -e '.schema_version == 4 and .build_datetime == "260901120000"' "${canonical}/build-record.json" >/dev/null
+jq -e '.schema_version == 5 and .storage_layout == 2 and .build_datetime == "260901120000"' "${canonical}/build-record.json" >/dev/null
 jq -e '.candidate_build_inputs == {"schema_version":1,"train_inputs":{"lock_receipt_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true}}' "${canonical}/build-record.json" >/dev/null
-jq -e '.schema_version == 2' "${canonical}/artifact-index.json" >/dev/null
-artifact_line="$(grep -nF "${artifact_digest}/conda/linux-64/example-26.10.00.conda" "${temporary_directory}/put-objects.log" | cut -d: -f1)"
-index_line="$(grep -nF "${artifact_digest}/conda/artifact-index.json" "${temporary_directory}/put-objects.log" | cut -d: -f1)"
+jq -e '.schema_version == 3 and .source_artifact == "conda"' "${canonical}/artifact-index.json" >/dev/null
+artifact_line="$(grep -nF "${artifact_digest}/linux-64/example-26.10.00.conda" "${temporary_directory}/put-objects.log" | cut -d: -f1)"
+index_line="$(grep -nF "${artifact_digest}/artifact-index.json" "${temporary_directory}/put-objects.log" | cut -d: -f1)"
 if [[ -z "${artifact_line}" || -z "${index_line}" || "${index_line}" -le "${artifact_line}" ]]; then
   echo "canonical artifact index was not committed after its artifact bytes" >&2
   exit 1
@@ -140,7 +140,7 @@ if jq -e 'tostring | test("run_id|run_attempt")' "${canonical}/artifact-index.js
   exit 1
 fi
 jq -e '.source_run_id == "101" and .source_run_attempt == "1"' \
-  "${train}/101.1/bundle-reference.json" >/dev/null
+  "${train}/101.1/${artifact_digest}/bundle-reference.conda.json" >/dev/null
 if run_upload 9 "${base_implementation_revisions}" "dddddddddddddddddddddddddddddddddddddddd" >/dev/null 2>&1; then
   echo "upload accepted a gha-tools revision that does not match the release train" >&2
   exit 1
@@ -151,7 +151,7 @@ if run_upload 9 "${base_implementation_revisions}" "" "ddddddddddddddddddddddddd
 fi
 
 run_upload 2 "${changed_implementation_revisions}"
-test -f "${train}/101.2/bundle-reference.json"
+test -n "$(find "${train}/101.2" -name 'bundle-reference.conda.json' -print -quit)"
 mapfile -t artifact_digests < <(find "${artifact_root}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
 if [[ "${#artifact_digests[@]}" -ne 2 || "${artifact_digests[0]}" == "${artifact_digests[1]}" ]]; then
   echo "shared build implementation change did not create a distinct build-input digest" >&2
@@ -161,7 +161,7 @@ cat >"${temporary_directory}/upstream-inputs.json" <<'EOF'
 {
   "schema_version": 1,
   "dependencies": [{
-    "artifact_key": "artifacts/rapids-logger/input/conda",
+    "artifact_key": "artifacts/rapids-logger/input",
     "path": "noarch/rapids-logger-0.3.0.conda",
     "release_catalog_key": "conda:rapids-logger",
     "producer": {
@@ -180,10 +180,10 @@ if [[ "${#artifact_digests[@]}" -ne 3 ]]; then
   echo "upstream input change did not create a distinct build-input digest" >&2
   exit 1
 fi
-test -f "${train}/101.3/bundle-reference.json"
+test -n "$(find "${train}/101.3" -name 'bundle-reference.conda.json' -print -quit)"
 upstream_digest=""
 for candidate_digest in "${artifact_digests[@]}"; do
-  candidate_record="${artifact_root}/${candidate_digest}/conda/build-record.json"
+  candidate_record="${artifact_root}/${candidate_digest}/build-record.json"
   if jq -e '.upstream_dependencies | length == 1' "${candidate_record}" >/dev/null; then
     upstream_digest="${candidate_digest}"
     break
@@ -195,7 +195,7 @@ if [[ -z "${upstream_digest}" ]]; then
 fi
 jq -e '
   .upstream_dependencies == [{
-    artifact_key: "artifacts/rapids-logger/input/conda",
+    artifact_key: "artifacts/rapids-logger/input",
     path: "noarch/rapids-logger-0.3.0.conda",
     release_catalog_key: "conda:rapids-logger",
     producer: {
@@ -208,7 +208,7 @@ jq -e '
       ecosystem: "conda", name: "rapids-logger", version: "0.3.0", platform: "noarch"
     }
   }]
-' "${artifact_root}/${upstream_digest}/conda/build-record.json" >/dev/null
+' "${artifact_root}/${upstream_digest}/build-record.json" >/dev/null
 run_upload 4 "${base_implementation_revisions}" "" "" "260901120001"
 mapfile -t artifact_digests < <(find "${artifact_root}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
 if [[ "${#artifact_digests[@]}" -ne 4 ]]; then
