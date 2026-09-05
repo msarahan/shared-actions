@@ -62,8 +62,8 @@ if [[ "${RELEASE_CANDIDATE_GHA_TOOLS_REVISION}" != "$(jq -r '."gha-tools"' <<<"$
   echo "gha-tools revision does not match the frozen release train" >&2
   exit 1
 fi
-if [[ "${RELEASE_SOURCE_ARTIFACT_NAME}" == */* || "${RELEASE_SOURCE_ARTIFACT_NAME}" == *".."* ]]; then
-  echo "RELEASE_SOURCE_ARTIFACT_NAME must be a plain bundle name" >&2
+if [[ ! "${RELEASE_SOURCE_ARTIFACT_NAME}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "RELEASE_SOURCE_ARTIFACT_NAME must contain only letters, numbers, underscores, and hyphens" >&2
   exit 1
 fi
 if ! safe_prefix "${RELEASE_CANDIDATE_CONTENT_PREFIX}" || ! safe_prefix "${RELEASE_CANDIDATE_TRAIN_PREFIX}"; then
@@ -99,7 +99,8 @@ candidate_build_inputs="$(jq -ceS '
 }
 
 bundle_root="$(realpath "${RELEASE_ARTIFACT_DIRECTORY}")"
-entries_path="${bundle_root}/release-catalog-entries.json"
+entries_name="release-catalog-entries.${RELEASE_SOURCE_ARTIFACT_NAME}.json"
+entries_path="${bundle_root}/${entries_name}"
 if [[ ! -f "${entries_path}" ]]; then
   echo "release catalog entries are missing: ${entries_path}" >&2
   exit 1
@@ -165,7 +166,8 @@ jq -cS --argjson upstream_dependencies "${upstream_dependencies}" \
   --argjson candidate_build_inputs "${candidate_build_inputs}" \
   --arg build_datetime "${RAPIDS_DATETIME_STRING:-}" '
   {
-    schema_version: 4,
+    schema_version: 5,
+    storage_layout: 2,
     producer,
     source: (.source | {artifact, repository, sha, workflow_ref, matrix}),
     build_datetime: $build_datetime,
@@ -187,12 +189,12 @@ if [[ ! "${attempt_id}" =~ ^[0-9]+\.[0-9]+$ ]]; then
   echo "GITHUB_RUN_ID and GITHUB_RUN_ATTEMPT must be numeric for a candidate upload" >&2
   exit 1
 fi
-artifact_key="${RELEASE_CANDIDATE_CONTENT_PREFIX}/${repository_name}/${build_input_digest}/${RELEASE_SOURCE_ARTIFACT_NAME}"
+artifact_key="${RELEASE_CANDIDATE_CONTENT_PREFIX}/${repository_name}/${build_input_digest}"
 build_record_key="${artifact_key}/build-record.json"
 artifact_index_key="${artifact_key}/artifact-index.json"
-train_bundle_key="${RELEASE_CANDIDATE_TRAIN_PREFIX}/${RELEASE_CANDIDATE_TRAIN_SHA256}/${repository_name}/${RELEASE_SOURCE_ARTIFACT_NAME}/${attempt_id}"
-bundle_key="${train_bundle_key}/release-catalog-entries.json"
-train_key="${train_bundle_key}/bundle-reference.json"
+train_bundle_key="${RELEASE_CANDIDATE_TRAIN_PREFIX}/${RELEASE_CANDIDATE_TRAIN_SHA256}/${repository_name}/${attempt_id}/${build_input_digest}"
+bundle_key="${train_bundle_key}/${entries_name}"
+train_key="${train_bundle_key}/bundle-reference.${RELEASE_SOURCE_ARTIFACT_NAME}.json"
 # Primary package bytes and deterministic SBOMs are canonical release content.
 # Generated provenance identifies a specific GitHub execution, so it remains
 # under the train attempt alongside the execution catalog. A signature is kept
@@ -278,7 +280,9 @@ while IFS= read -r entry; do
 done < <(jq -c '.entries[]' "${entries_path}") >"${artifact_index_entries}"
 jq -csS \
   --arg build_input_digest "${build_input_digest}" \
-  '{schema_version: 2, producer: "shared-workflows", build_input_digest: $build_input_digest,
+  --arg source_artifact "${RELEASE_SOURCE_ARTIFACT_NAME}" \
+  '{schema_version: 3, producer: "shared-workflows", build_input_digest: $build_input_digest,
+    source_artifact: $source_artifact,
     entries: sort_by(.release_catalog_key, .path)}' \
   "${artifact_index_entries}" >"${artifact_index_path}"
 
@@ -309,7 +313,7 @@ jq -n \
   --arg build_record_key "${build_record_key}" \
   --arg artifact_index_key "${artifact_index_key}" \
   --arg bundle_key "${bundle_key}" \
-  '{schema_version: 3, producer: "shared-workflows", train_sha256: $train_sha256, repository: $repository, source_artifact: $source_artifact, source_run_id: $source_run_id, source_run_attempt: $source_run_attempt, build_input_digest: $build_input_digest, artifact_key: $artifact_key, build_record_key: $build_record_key, artifact_index_key: $artifact_index_key, bundle_key: $bundle_key}' \
+  '{schema_version: 4, producer: "shared-workflows", storage_layout: 2, train_sha256: $train_sha256, repository: $repository, source_artifact: $source_artifact, source_run_id: $source_run_id, source_run_attempt: $source_run_attempt, build_input_digest: $build_input_digest, artifact_key: $artifact_key, build_record_key: $build_record_key, artifact_index_key: $artifact_index_key, bundle_key: $bundle_key}' \
   >"${reference_path}"
 
 upload_reference() {

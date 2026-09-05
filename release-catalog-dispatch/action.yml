@@ -75,7 +75,7 @@ runs:
       env:
         IMPLEMENTATION_PATH: ${{ steps.implementation.outputs.path }}
         RELEASE_ARTIFACTS: ${{ steps.configuration.outputs.artifacts }}
-        RELEASE_ENTRIES_NAME: release-catalog-entries.json
+        RELEASE_ENTRIES_NAME: release-catalog-entries.${{ inputs.source-artifact-name }}.json
         RELEASE_ARTIFACT_DIRECTORY: ${{ steps.configuration.outputs.artifact_directory }}
         RELEASE_SOURCE_ARTIFACT_NAME: ${{ inputs.source-artifact-name }}
         RELEASE_CATALOG_KEY: ${{ steps.configuration.outputs.release_catalog_key }}

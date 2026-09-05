@@ -14,13 +14,13 @@ The companion contains:
 
 ```text
 .
-├── release-catalog-entries.json
+├── release-catalog-entries.<source-artifact>.json
 └── release-evidence
     ├── <artifact evidence>.provenance.json
     └── <artifact evidence>.spdx.json
 ```
 
-`release-catalog-entries.json` is one atomic job-level envelope. Its `source`
+`release-catalog-entries.<source-artifact>.json` is one atomic job-level envelope. Its `source`
 object records the source artifact and build context, while its `entries` array
 contains the release catalog entries produced by that job. The release platform
 validates and aggregates entry arrays from selected builds into the release
@@ -43,7 +43,7 @@ identity contents and whether primary-artifact paths resolve unambiguously.
 
 The `release_catalog_key` is used to group artifacts in the catalog. Every file
 from every matrix variant in the same publishable artifact set uses the same
-key. The release platform aggregates multiple `release-catalog-entries.json`
+key. The release platform aggregates multiple qualified release-catalog entry
 files and coalesces entries with the same `release_catalog_key`. Standard RAPIDS
 conda and wheel workflows construct the key as `<ecosystem>:<repository-name>`,
 such as `conda:cudf`. Custom producers select a key, such as `maven:cuvs-java`,
