@@ -112,7 +112,7 @@ run_upload() {
     RELEASE_CANDIDATE_BUILD_INPUTS="${temporary_directory}/candidate-build-inputs.json" \
     RELEASE_CANDIDATE_CONTAINER_IMAGES="${candidate_images}" \
     RAPIDS_DATETIME_STRING="${build_datetime}" \
-    "${repository_root}/release-catalog/upload-s3.sh"
+    "${repository_root}/release-catalog/upload-candidate-s3.sh"
 }
 
 base_implementation_revisions='{"gha-tools":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","shared-actions":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","shared-workflows":"cccccccccccccccccccccccccccccccccccccccc"}'

@@ -116,4 +116,4 @@ repos:
         language: python
         additional_dependencies: [pytest]
         pass_filenames: false
-        files: ^(release-catalog/(config\.schema\.json|validate-config\.sh|materialize\.sh)|tests/test_catalog_authenticated_evidence\.py)$
+        files: ^(release-catalog/(config\.schema\.json|validate-config\.sh|materialize-candidate\.sh)|tests/test_catalog_authenticated_evidence\.py)$

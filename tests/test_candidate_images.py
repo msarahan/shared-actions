@@ -58,3 +58,20 @@ def test_custom_images_cannot_be_overridden_or_omitted():
         _MODULE.validate(train, digest, {"ci:tag": "other"}, {}, "", "ci:tag")
     with pytest.raises(ValueError, match="lacks image digests"):
         _MODULE.validate(train, digest, {}, {}, "", "absent")
+
+
+def test_current_image_series_requires_matching_reviewed_image():
+    matrix = {"include": [{"CUDA_VER": "13.0", "LINUX_VER": "ubuntu24.04", "PY_VER": "3.13"}]}
+    name = "rapidsai/ci-conda:26.12-cuda13.0-ubuntu24.04-py3.13"
+    train = {"candidate_container_images": {name: "registry/ci@sha256:" + "a" * 64}}
+    digest = _MODULE.canonical_train_digest(train)
+    if _MODULE.validate(train, digest, {}, matrix, "ci-conda", "", "26.12") != train["candidate_container_images"]:
+        pytest.fail("reviewed current-series image was rejected")
+    with pytest.raises(ValueError, match="lacks image digests"):
+        _MODULE.validate(train, digest, {}, matrix, "ci-conda", "", "26.10")
+
+
+@pytest.mark.parametrize("series", ["26.12/../../bad", "26.13", "latest", "26.1", None])
+def test_reject_unreviewable_image_series(series):
+    with pytest.raises(ValueError, match=r"YY\.MM"):
+        _MODULE.validate({}, "0" * 64, {}, {}, "", "ci:tag", series)

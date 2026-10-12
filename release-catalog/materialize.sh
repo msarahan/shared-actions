@@ -146,20 +146,8 @@ describe_wheel_package() {
     exit 1
   fi
 
-  # RAPIDS CUDA wheels use a distribution suffix such as rmm-cu12. Keep that
-  # artifact-level compatibility fact in the catalog; the producing job's
-  # matrix is not a reliable substitute for it.
-  local cuda_major=""
-  if [[ "${package_name}" =~ -cu([0-9]+)$ ]]; then
-    cuda_major="${BASH_REMATCH[1]}"
-  fi
-  if [[ -n "${cuda_major}" ]]; then
-    jq -cn --arg name "${package_name}" --arg version "${package_version}" --arg cuda_major "${cuda_major}" \
-      '{ecosystem: "wheel", name: $name, version: $version, cuda_major: $cuda_major}'
-  else
-    jq -cn --arg name "${package_name}" --arg version "${package_version}" \
-      '{ecosystem: "wheel", name: $name, version: $version}'
-  fi
+  jq -cn --arg name "${package_name}" --arg version "${package_version}" \
+    '{ecosystem: "wheel", name: $name, version: $version}'
 }
 
 # Maven-built JARs normally expose their coordinates in exactly one
@@ -239,29 +227,7 @@ describe_conda_package() {
     exit 1
   fi
 
-  # The embedded package dependency is the compatibility contract. The build
-  # matrix is only how this package was produced; it must not prevent a
-  # CUDA-independent package from serving another CUDA build in the train.
-  local cuda_major
-  cuda_major="$(jq -r '
-    [
-      .depends[]?
-      | select(type == "string" and startswith("cuda-version"))
-      | capture("(?<major>[0-9]+)").major
-    ]
-    | unique
-    | if length == 0 then ""
-      elif length == 1 then .[0]
-      else error("Conda package has conflicting cuda-version dependencies")
-      end
-  ' <<<"${index_json}")"
-  if [[ -n "${cuda_major}" ]]; then
-    jq -c --arg cuda_major "${cuda_major}" \
-      '{ecosystem: "conda", name, version, build, platform: .subdir, cuda_major: $cuda_major}' \
-      <<<"${index_json}"
-  else
-    jq -c '{ecosystem: "conda", name, version, build, platform: .subdir}' <<<"${index_json}"
-  fi
+  jq -c '{ecosystem: "conda", name, version, build, platform: .subdir}' <<<"${index_json}"
 }
 
 prepare_artifacts() {
@@ -389,13 +355,12 @@ printf '%s\n' '{"entries":[]}' >"${temporary_manifest}"
 validate_package_identity() {
   jq -e '
     type == "object"
-    and (keys - ["ecosystem", "name", "version", "build", "platform", "cuda_major"] | length == 0)
+    and (keys - ["ecosystem", "name", "version", "build", "platform"] | length == 0)
     and (.ecosystem | type == "string" and length > 0)
     and (.name | type == "string" and length > 0)
     and (.version | type == "string" and length > 0)
     and ((has("build") | not) or (.build | type == "string" and length > 0))
     and ((has("platform") | not) or (.platform | type == "string" and length > 0))
-    and ((has("cuda_major") | not) or (.cuda_major | type == "string" and test("^[0-9]+$")))
   ' >/dev/null
 }
 
@@ -494,11 +459,10 @@ shopt -s globstar nullglob
 while IFS= read -r descriptor; do
   if ! jq -e '
     type == "object"
-    and (keys - ["path", "package_identity_file", "package", "dependency_sbom", "attestation_bundle"] | length == 0)
+    and (keys - ["path", "package_identity_file", "package"] | length == 0)
     and (.path | type == "string" and length > 0)
     and ((.package_identity_file // "") | type == "string")
     and ([has("package"), has("package_identity_file")] | map(select(.)) | length == 1)
-    and (has("dependency_sbom") == has("attestation_bundle"))
   ' <<<"${descriptor}" >/dev/null; then
     release_catalog_error "release artifact descriptor must contain path and exactly one package identity source: ${descriptor}"
     exit 1
@@ -535,19 +499,6 @@ while IFS= read -r descriptor; do
     --argjson package "${package}" \
     '{release_catalog_key: $release_catalog_key, path: $path, sha256: $sha256, sbom: $sbom, sbom_kind: "generated-identity", provenance: $provenance, package: $package}')"
 
-  dependency_sbom_pattern="$(jq -r '.dependency_sbom // empty' <<<"${descriptor}")"
-  attestation_pattern="$(jq -r '.attestation_bundle // empty' <<<"${descriptor}")"
-  if [[ -n "${dependency_sbom_pattern}" || -n "${attestation_pattern}" ]]; then
-    if [[ -z "${dependency_sbom_pattern}" || -z "${attestation_pattern}" ]]; then
-      echo "dependency_sbom and attestation_bundle must be supplied together" >&2
-      exit 1
-    fi
-    dependency_sbom_path="$(resolve_one_file dependency_sbom "${dependency_sbom_pattern}")"
-    attestation_path="$(resolve_one_file attestation_bundle "${attestation_pattern}")"
-    entry="$(jq -c --arg cdx "${dependency_sbom_path}" --arg bundle "${attestation_path}" \
-      '.sboms = {spdx: .sbom, cyclonedx: $cdx} | del(.sbom) | .signature = $bundle | .sbom_kind = "producer-dependency"' <<<"${entry}")"
-  fi
-
   jq --argjson entry "${entry}" '.entries += [$entry]' "${temporary_manifest}" >"${temporary_manifest}.next"
   mv "${temporary_manifest}.next" "${temporary_manifest}"
 done < <(jq -c '.[]' <<<"${artifacts}")
@@ -567,9 +518,6 @@ jq -n -S \
   --arg run_id "${github_run_id}" \
   --arg sha "${source_sha}" \
   --arg workflow_ref "${github_workflow_ref}" \
-  --arg matrix_arch "${RELEASE_CANDIDATE_MATRIX_ARCH:-}" \
-  --arg matrix_cuda_version "${RELEASE_CANDIDATE_MATRIX_CUDA_VERSION:-}" \
-  --arg matrix_python_version "${RELEASE_CANDIDATE_MATRIX_PYTHON_VERSION:-}" \
   --argjson entries "$(jq -c '.entries' "${temporary_manifest}")" \
   '{
     schema_version: 1,
@@ -580,12 +528,7 @@ jq -n -S \
       sha: $sha,
       workflow_ref: $workflow_ref,
       run_id: $run_id,
-      run_attempt: $run_attempt,
-      matrix: {
-        arch: $matrix_arch,
-        cuda_version: $matrix_cuda_version,
-        python_version: $matrix_python_version
-      }
+      run_attempt: $run_attempt
     },
     entries: $entries
   }' >"${entries_path}"

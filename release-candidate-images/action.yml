@@ -13,6 +13,9 @@ inputs:
   image-family:
     description: ci-conda or ci-wheel for matrix builds.
     default: ''
+  image-series:
+    description: Reviewed CI image series in YY.MM format.
+    default: '26.10'
   custom-image:
     description: Image name used by a custom job.
     default: ''
@@ -31,6 +34,7 @@ runs:
         CALLER_IMAGES: ${{ inputs.caller-images }}
         BUILD_MATRIX: ${{ inputs.matrix }}
         IMAGE_FAMILY: ${{ inputs.image-family }}
+        IMAGE_SERIES: ${{ inputs.image-series }}
         CUSTOM_IMAGE: ${{ inputs.custom-image }}
         TRAIN_FILE: ${{ runner.temp }}/candidate-image-train.json
       run: |

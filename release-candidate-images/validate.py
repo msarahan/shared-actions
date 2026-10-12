@@ -20,7 +20,9 @@ def canonical_train_digest(train):
     return actual
 
 
-def validate(train, digest, supplied, matrix, family, custom_image):
+def validate(train, digest, supplied, matrix, family, custom_image, image_series="26.10"):
+    if not isinstance(image_series, str) or not re.fullmatch(r"[0-9]{2}\.(?:0[1-9]|1[0-2])", image_series):
+        raise ValueError("candidate image series must use YY.MM format")
     if not re.fullmatch(r"[0-9a-f]{64}", digest) or canonical_train_digest(train) != digest:
         raise ValueError("candidate train digest does not match canonical content")
     images = train.get("candidate_container_images")
@@ -42,7 +44,7 @@ def validate(train, digest, supplied, matrix, family, custom_image):
         if family not in {"ci-conda", "ci-wheel"} or not isinstance(matrix, dict) or not matrix.get("include"):
             raise ValueError("candidate image validation requires a complete build matrix")
         expected = {
-            f"rapidsai/{family}:26.10-cuda{cell['CUDA_VER']}-{cell['LINUX_VER']}-py{cell['PY_VER']}"
+            f"rapidsai/{family}:{image_series}-cuda{cell['CUDA_VER']}-{cell['LINUX_VER']}-py{cell['PY_VER']}"
             for cell in matrix["include"]
         }
     missing = sorted(expected - set(images))
@@ -59,6 +61,7 @@ def main():
         json.loads(os.environ["BUILD_MATRIX"] or "{}"),
         os.environ["IMAGE_FAMILY"],
         os.environ["CUSTOM_IMAGE"],
+        os.environ.get("IMAGE_SERIES", "26.10"),
     )
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write("images=" + json.dumps(images, sort_keys=True, separators=(",", ":")) + "\n")
