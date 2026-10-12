@@ -494,10 +494,11 @@ shopt -s globstar nullglob
 while IFS= read -r descriptor; do
   if ! jq -e '
     type == "object"
-    and (keys - ["path", "package_identity_file", "package"] | length == 0)
+    and (keys - ["path", "package_identity_file", "package", "dependency_sbom", "attestation_bundle"] | length == 0)
     and (.path | type == "string" and length > 0)
     and ((.package_identity_file // "") | type == "string")
     and ([has("package"), has("package_identity_file")] | map(select(.)) | length == 1)
+    and (has("dependency_sbom") == has("attestation_bundle"))
   ' <<<"${descriptor}" >/dev/null; then
     release_catalog_error "release artifact descriptor must contain path and exactly one package identity source: ${descriptor}"
     exit 1
@@ -533,6 +534,19 @@ while IFS= read -r descriptor; do
     --arg provenance "${provenance_path}" \
     --argjson package "${package}" \
     '{release_catalog_key: $release_catalog_key, path: $path, sha256: $sha256, sbom: $sbom, sbom_kind: "generated-identity", provenance: $provenance, package: $package}')"
+
+  dependency_sbom_pattern="$(jq -r '.dependency_sbom // empty' <<<"${descriptor}")"
+  attestation_pattern="$(jq -r '.attestation_bundle // empty' <<<"${descriptor}")"
+  if [[ -n "${dependency_sbom_pattern}" || -n "${attestation_pattern}" ]]; then
+    if [[ -z "${dependency_sbom_pattern}" || -z "${attestation_pattern}" ]]; then
+      echo "dependency_sbom and attestation_bundle must be supplied together" >&2
+      exit 1
+    fi
+    dependency_sbom_path="$(resolve_one_file dependency_sbom "${dependency_sbom_pattern}")"
+    attestation_path="$(resolve_one_file attestation_bundle "${attestation_pattern}")"
+    entry="$(jq -c --arg cdx "${dependency_sbom_path}" --arg bundle "${attestation_path}" \
+      '.sboms = {spdx: .sbom, cyclonedx: $cdx} | del(.sbom) | .signature = $bundle | .sbom_kind = "producer-dependency"' <<<"${entry}")"
+  fi
 
   jq --argjson entry "${entry}" '.entries += [$entry]' "${temporary_manifest}" >"${temporary_manifest}.next"
   mv "${temporary_manifest}.next" "${temporary_manifest}"

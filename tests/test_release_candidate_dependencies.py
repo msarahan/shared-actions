@@ -1,7 +1,11 @@
 # Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 import argparse
+import hashlib
 import importlib.util
+import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -72,6 +76,67 @@ def test_candidate_setup_exports_cache_policy_and_train_input_identity():
     missing = [contract for contract in expected_contracts if contract not in setup]
     if missing:
         pytest.fail(f"candidate build-input identity is incomplete: {missing}")
+
+
+def test_actual_setup_binds_reviewed_images_before_bootstrap(tmp_path):
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    receipt_bytes = b"{}"
+    receipt_digest = hashlib.sha256(receipt_bytes).hexdigest()
+    for name in ("locks.json", "variants.json"):
+        (fixtures / name).write_bytes(receipt_bytes)
+    images = {"ci:tag": "registry/ci@sha256:" + "a" * 64}
+    train = {
+        "candidate_container_images": images,
+        "build_tool_revisions": {"rapids-cmake": "a" * 40},
+        "build_implementation_revisions": dict.fromkeys(["gha-tools", "shared-actions", "shared-workflows"], "a" * 40),
+        "candidate_build_policy": {"sccache": False},
+        "input_receipts": {name: {"path": name + ".json", "sha256": receipt_digest} for name in ("locks", "variants")},
+    }
+    digest = hashlib.sha256(json.dumps(train, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    (fixtures / "release-train.json").write_text(json.dumps(train))
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    (binaries / "aws").write_text('#!/bin/bash\nset -euo pipefail\ncp "${FIXTURES}/${3##*/}" "$4"\n')
+    (binaries / "git").write_text(
+        '#!/bin/bash\nset -euo pipefail\nif [[ "${3:-}" == rev-parse ]]; then printf "%s\\n" "$FROZEN_SHA"; fi\n'
+    )
+    for binary in binaries.iterdir():
+        binary.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+        "FIXTURES": str(fixtures),
+        "FROZEN_SHA": "a" * 40,
+        "GITHUB_ENV": str(tmp_path / "env"),
+        "GITHUB_PATH": str(tmp_path / "path"),
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_REPOSITORY": "rapidsai/kvikio",
+        "RELEASE_CANDIDATE_BUCKET": "candidate-store",
+        "RELEASE_CANDIDATE_TRAIN_PREFIX": "train-state",
+        "RELEASE_CANDIDATE_TRAIN_SHA256": digest,
+        "RELEASE_CANDIDATE_PREPARE_CONDA_CHANNEL": "true",
+        "RELEASE_CANDIDATE_ARTIFACT_FAMILY": "conda",
+        "RELEASE_CANDIDATE_ARCH": "amd64",
+        "RELEASE_CANDIDATE_CUDA_VERSION": "13.0",
+        "RELEASE_CANDIDATE_PYTHON_VERSION": "3.13",
+        "RELEASE_CANDIDATE_CONTAINER_IMAGES": json.dumps(images),
+        "RELEASE_CANDIDATE_SHARED_ACTIONS_REPOSITORY": "rapidsai/shared-actions",
+        "RELEASE_CANDIDATE_SHARED_ACTIONS_REVISION": "a" * 40,
+        "RELEASE_CANDIDATE_SHARED_WORKFLOWS_REPOSITORY": "rapidsai/shared-workflows",
+        "RELEASE_CANDIDATE_SHARED_WORKFLOWS_REVISION": "a" * 40,
+    }
+    bash_path = shutil.which("bash")
+    if bash_path is None:
+        pytest.fail("candidate setup tests require Bash 4 or newer")
+    result = subprocess.run(  # noqa: S603 - invokes the repository-local script with fixture credentials.
+        [bash_path, str(_SETUP)], env=environment, capture_output=True, text=True, check=False
+    )
+    if result.returncode == 0 or "complete Conda bootstrap tool bundle" not in result.stderr:
+        pytest.fail(f"setup did not reach the expected bootstrap gate: {result.stderr}")
+    record = json.loads((tmp_path / "release-candidate-dependencies/candidate-build-inputs.json").read_text())
+    if record["container_images"] != images or record["build_policy"] != {"sccache": False}:
+        pytest.fail("actual setup script lost approved image or cache-policy identities")
 
 
 def test_wheel_lock_selector_requires_one_exact_matrix_scope():

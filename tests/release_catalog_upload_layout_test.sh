@@ -25,6 +25,7 @@ while [[ "$#" -gt 0 ]]; do
     --bucket) bucket="$2"; shift 2 ;;
     --key) key="$2"; shift 2 ;;
     --body) body="$2"; shift 2 ;;
+    --tagging) echo "producers must not set lifecycle tags" >&2; exit 2 ;;
     *) shift ;;
   esac
 done
@@ -76,7 +77,9 @@ printf 'package bytes\n' >"${temporary_directory}/bundle/linux-64/example-26.10.
 printf '{"spdxVersion":"SPDX-2.3"}\n' >"${temporary_directory}/bundle/release-evidence/example.spdx.json"
 printf '{"run":"101"}\n' >"${temporary_directory}/bundle/release-evidence/example.intoto.jsonl"
 printf '{"schema_version":1,"dependencies":[]}\n' >"${temporary_directory}/upstream-inputs.json"
-printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true}}' >"${temporary_directory}/candidate-build-inputs.json"
+printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true},"container_images":{"ci:tag":"registry/ci@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}' >"${temporary_directory}/candidate-build-inputs.json"
+
+candidate_images='{"ci:tag":"registry/ci@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}'
 
 run_upload() {
   local implementation_revisions="$2"
@@ -107,6 +110,7 @@ run_upload() {
     RELEASE_CANDIDATE_CATALOG_SHARED_ACTIONS_REVISION="${shared_actions_revision}" \
     RELEASE_CANDIDATE_UPSTREAM_INPUTS="${temporary_directory}/upstream-inputs.json" \
     RELEASE_CANDIDATE_BUILD_INPUTS="${temporary_directory}/candidate-build-inputs.json" \
+    RELEASE_CANDIDATE_CONTAINER_IMAGES="${candidate_images}" \
     RAPIDS_DATETIME_STRING="${build_datetime}" \
     "${repository_root}/release-catalog/upload-s3.sh"
 }
@@ -126,7 +130,7 @@ test -f "${train}/101.1/${artifact_digest}/release-evidence/example.intoto.jsonl
 test ! -d "${artifact_root}/${artifact_digest}/attempts"
 jq -e '.upstream_dependencies == []' "${canonical}/build-record.json" >/dev/null
 jq -e '.schema_version == 5 and .storage_layout == 2 and .build_datetime == "260901120000"' "${canonical}/build-record.json" >/dev/null
-jq -e '.candidate_build_inputs == {"schema_version":1,"train_inputs":{"lock_receipt_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true}}' "${canonical}/build-record.json" >/dev/null
+jq -e '.candidate_build_inputs == {"schema_version":1,"train_inputs":{"lock_receipt_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true},"container_images":{"ci:tag":"registry/ci@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}' "${canonical}/build-record.json" >/dev/null
 jq -e '.schema_version == 3 and .source_artifact == "conda"' "${canonical}/artifact-index.json" >/dev/null
 artifact_line="$(grep -nF "${artifact_digest}/linux-64/example-26.10.00.conda" "${temporary_directory}/put-objects.log" | cut -d: -f1)"
 index_line="$(grep -nF "${artifact_digest}/artifact-index.json" "${temporary_directory}/put-objects.log" | cut -d: -f1)"
@@ -221,28 +225,48 @@ if [[ "${#artifact_digests[@]}" -ne 5 ]]; then
   echo "empty build timestamp was not accepted as a stable build input" >&2
   exit 1
 fi
-printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true}}' >"${temporary_directory}/candidate-build-inputs.json"
+printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true},"container_images":{"ci:tag":"registry/ci@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}' >"${temporary_directory}/candidate-build-inputs.json"
 run_upload 7 "${base_implementation_revisions}"
 mapfile -t artifact_digests < <(find "${artifact_root}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
 if [[ "${#artifact_digests[@]}" -ne 6 ]]; then
   echo "train lock receipt change did not create a distinct build-input digest" >&2
   exit 1
 fi
-printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","variant_receipt_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},"build_policy":{"sccache":true}}' >"${temporary_directory}/candidate-build-inputs.json"
+printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","variant_receipt_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},"build_policy":{"sccache":true},"container_images":{"ci:tag":"registry/ci@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}' >"${temporary_directory}/candidate-build-inputs.json"
 run_upload 8 "${base_implementation_revisions}"
 mapfile -t artifact_digests < <(find "${artifact_root}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
 if [[ "${#artifact_digests[@]}" -ne 7 ]]; then
   echo "train variant receipt change did not create a distinct build-input digest" >&2
   exit 1
 fi
-printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":false}}' >"${temporary_directory}/candidate-build-inputs.json"
+printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":false},"container_images":{"ci:tag":"registry/ci@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}' >"${temporary_directory}/candidate-build-inputs.json"
 run_upload 9 "${base_implementation_revisions}"
 mapfile -t artifact_digests < <(find "${artifact_root}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
 if [[ "${#artifact_digests[@]}" -ne 8 ]]; then
   echo "sccache policy change did not create a distinct build-input digest" >&2
   exit 1
 fi
-printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true}}' >"${temporary_directory}/candidate-build-inputs.json"
+printf '%s\n' '{"schema_version":1,"train_inputs":{"lock_receipt_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","variant_receipt_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"build_policy":{"sccache":true},"container_images":{"ci:tag":"registry/ci@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}' >"${temporary_directory}/candidate-build-inputs.json"
+cp "${temporary_directory}/candidate-build-inputs.json" "${temporary_directory}/original-inputs.json"
+candidate_images='{"ci:tag":"registry/ci@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}'
+jq --argjson images "${candidate_images}" '.container_images = $images' "${temporary_directory}/original-inputs.json" >"${temporary_directory}/candidate-build-inputs.json"
+run_upload 10 "${base_implementation_revisions}"
+mapfile -t artifact_digests < <(find "${artifact_root}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+if [[ "${#artifact_digests[@]}" -ne 9 ]]; then
+  echo "container image change did not create a distinct build-input digest" >&2
+  exit 1
+fi
+jq 'del(.container_images)' "${temporary_directory}/original-inputs.json" >"${temporary_directory}/candidate-build-inputs.json"
+if run_upload 11 "${base_implementation_revisions}" >/dev/null 2>&1; then
+  echo "upload accepted missing image identity" >&2
+  exit 1
+fi
+cp "${temporary_directory}/original-inputs.json" "${temporary_directory}/candidate-build-inputs.json"
+if run_upload 11 "${base_implementation_revisions}" >/dev/null 2>&1; then
+  echo "upload accepted image identity different from approved train map" >&2
+  exit 1
+fi
+candidate_images='{"ci:tag":"registry/ci@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}'
 printf 'different bytes\n' >"${temporary_directory}/bundle/linux-64/example-26.10.00.conda"
 if run_upload 6 "${base_implementation_revisions}" >/dev/null 2>&1; then
   echo "upload accepted different canonical package bytes" >&2

@@ -57,9 +57,14 @@ fi
 # coordinator did not stage this candidate correctly; guessing from S3 paths
 # would make unrelated outputs available to the job.
 aws s3 cp "${root}/release-train.json" "${workspace}/release-train.json"
-actual_train_sha256="$(jq -cSj 'del(.train_sha256)' "${workspace}/release-train.json" | sha256sum | awk '{print $1}')"
+actual_train_sha256="$(python "${script_directory}/../release-candidate-images/validate.py" "${workspace}/release-train.json")"
 if [[ "${actual_train_sha256}" != "${RELEASE_CANDIDATE_TRAIN_SHA256}" ]]; then
   echo "stored release train does not match RELEASE_CANDIDATE_TRAIN_SHA256" >&2
+  exit 1
+fi
+expected_images="$(jq -ceS '.candidate_container_images | select(type == "object" and length > 0)' "${workspace}/release-train.json")"
+if [[ "$(jq -cS . <<<"${RELEASE_CANDIDATE_CONTAINER_IMAGES:-null}")" != "${expected_images}" ]]; then
+  echo "candidate container images do not match the reviewed release train" >&2
   exit 1
 fi
 rapids_cmake_sha="$(jq -r '.build_tool_revisions["rapids-cmake"] // empty' "${workspace}/release-train.json")"
@@ -184,12 +189,13 @@ jq -cnS \
   --arg lock_receipt_sha256 "${lock_receipt_sha256}" \
   --arg variant_receipt_sha256 "${variant_receipt_sha256}" \
   --argjson sccache "${candidate_sccache}" \
+  --argjson container_images "${expected_images}" \
   '{schema_version: 1,
     train_inputs: {
       lock_receipt_sha256: $lock_receipt_sha256,
       variant_receipt_sha256: $variant_receipt_sha256
     },
-    build_policy: {sccache: $sccache}}' >"${candidate_build_inputs}"
+    build_policy: {sccache: $sccache}, container_images: $container_images}' >"${candidate_build_inputs}"
 
 if [[ "${RELEASE_CANDIDATE_PREPARE_CONDA_CHANNEL}" == "true" ]]; then
   mapfile -t bootstrap_records < <(jq -cer '.bootstrap_conda[]?' "${lock_source}")

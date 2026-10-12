@@ -42,6 +42,18 @@
         "path"
       ],
       "properties": {
+        "dependency_sbom": {
+          "description": "Producer-created CycloneDX dependency inventory, relative to artifact_directory. Requires attestation_bundle.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$"
+        },
+        "attestation_bundle": {
+          "description": "GitHub/Sigstore bundle signing both artifact and dependency SBOM, relative to artifact_directory. Requires dependency_sbom.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\r\\n]+$"
+        },
         "path": {
           "description": "Artifact path or glob, relative to artifact_directory. Absolute paths and parent-directory traversal are forbidden.",
           "type": "string",
@@ -60,6 +72,10 @@
             "pattern": "(^/)|((^|/)\\.\\.(/|$))"
           }
         }
+      },
+      "dependentRequired": {
+        "dependency_sbom": ["attestation_bundle"],
+        "attestation_bundle": ["dependency_sbom"]
       }
     }
   }

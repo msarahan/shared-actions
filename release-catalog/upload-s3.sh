@@ -74,7 +74,7 @@ if [[ ! -f "${RELEASE_CANDIDATE_BUILD_INPUTS}" ]]; then
   echo "RELEASE_CANDIDATE_BUILD_INPUTS does not name a readable candidate input record" >&2
   exit 1
 fi
-candidate_build_inputs="$(jq -ceS '
+candidate_build_inputs="$(jq -ceS --argjson approved_images "${RELEASE_CANDIDATE_CONTAINER_IMAGES:-null}" '
   if .schema_version != 1
      or ((.train_inputs | type) != "object")
      or ((.train_inputs.lock_receipt_sha256 | type) != "string")
@@ -83,14 +83,21 @@ candidate_build_inputs="$(jq -ceS '
      or ((.train_inputs.variant_receipt_sha256 | test("^[0-9a-f]{64}$")) | not)
      or ((.build_policy | type) != "object")
      or ((.build_policy.sccache | type) != "boolean")
-  then error("candidate build inputs must contain lock, variant, and sccache identities")
+     or ((.container_images | type) != "object")
+     or ((.container_images | length) == 0)
+     or (.container_images != $approved_images)
+     or ((.container_images | all(to_entries[];
+          (.key | length > 0) and
+          (.value | type == "string" and test("^[A-Za-z0-9./_-]+@sha256:[0-9a-f]{64}$")))) | not)
+  then error("candidate build inputs must contain lock, variant, sccache, and approved immutable image identities")
   else {
     schema_version: 1,
     train_inputs: {
       lock_receipt_sha256: .train_inputs.lock_receipt_sha256,
       variant_receipt_sha256: .train_inputs.variant_receipt_sha256
     },
-    build_policy: {sccache: .build_policy.sccache}
+    build_policy: {sccache: .build_policy.sccache},
+    container_images: .container_images
   }
   end
 ' "${RELEASE_CANDIDATE_BUILD_INPUTS}")" || {
@@ -199,7 +206,7 @@ train_key="${train_bundle_key}/bundle-reference.${RELEASE_SOURCE_ARTIFACT_NAME}.
 # Generated provenance identifies a specific GitHub execution, so it remains
 # under the train attempt alongside the execution catalog. A signature is kept
 # there as well until its determinism contract is defined.
-mapfile -t artifact_paths < <(jq -r '([.entries[] | .path, .sbom | strings] | unique) | .[]' "${entries_path}")
+mapfile -t artifact_paths < <(jq -r '([.entries[] | .path, .sbom, .sboms.spdx, .sboms.cyclonedx | strings] | unique) | .[]' "${entries_path}")
 mapfile -t execution_paths < <(jq -r '([.entries[] | .provenance, .signature? | strings] | unique) | .[]' "${entries_path}")
 head_metadata="$(mktemp)"
 artifact_index_entries="$(mktemp)"
@@ -220,7 +227,7 @@ upload_immutable() {
     return
   fi
 
-  if ! aws s3api put-object --bucket "${RELEASE_CANDIDATE_BUCKET}" --key "${object_key}" --body "${local_path}" --checksum-algorithm SHA256 --checksum-sha256 "${checksum}" --if-none-match '*' --tagging 'release-candidate-status=candidate' >/dev/null 2>&1; then
+  if ! aws s3api put-object --bucket "${RELEASE_CANDIDATE_BUCKET}" --key "${object_key}" --body "${local_path}" --checksum-algorithm SHA256 --checksum-sha256 "${checksum}" --if-none-match '*' >/dev/null 2>&1; then
     aws s3api head-object --bucket "${RELEASE_CANDIDATE_BUCKET}" --key "${object_key}" --checksum-mode ENABLED >"${head_metadata}"
     if [[ "$(jq -r '.ChecksumSHA256 // empty' "${head_metadata}")" != "${checksum}" ]]; then
       echo "candidate object could not be written immutably: ${object_key}" >&2
@@ -262,7 +269,7 @@ while IFS= read -r entry; do
   primary_path="$(jq -r '.path' <<<"${entry}")"
   package="$(jq -c '.package' <<<"${entry}")"
   primary_sha256="$(sha256sum "${bundle_root}/${primary_path}" | awk '{print $1}')"
-  sbom_path="$(jq -r '.sbom // empty' <<<"${entry}")"
+  sbom_path="$(jq -r '.sbom // .sboms.spdx // empty' <<<"${entry}")"
   if [[ -n "${sbom_path}" ]]; then
     sbom_sha256="$(sha256sum "${bundle_root}/${sbom_path}" | awk '{print $1}')"
   else
@@ -326,7 +333,7 @@ upload_reference() {
     fi
     return
   fi
-  if ! aws s3api put-object --bucket "${RELEASE_CANDIDATE_BUCKET}" --key "${train_key}" --body "${reference_path}" --checksum-algorithm SHA256 --checksum-sha256 "${checksum}" --if-none-match '*' --tagging 'release-candidate-status=candidate' >/dev/null 2>&1; then
+  if ! aws s3api put-object --bucket "${RELEASE_CANDIDATE_BUCKET}" --key "${train_key}" --body "${reference_path}" --checksum-algorithm SHA256 --checksum-sha256 "${checksum}" --if-none-match '*' >/dev/null 2>&1; then
     aws s3api head-object --bucket "${RELEASE_CANDIDATE_BUCKET}" --key "${train_key}" --checksum-mode ENABLED >"${head_metadata}"
     if [[ "$(jq -r '.ChecksumSHA256 // empty' "${head_metadata}")" != "${checksum}" ]]; then
       echo "candidate train reference could not be written immutably: ${train_key}" >&2

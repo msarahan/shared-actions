@@ -59,16 +59,19 @@ validation_errors="$(jq -r '
             | if ($artifact | type) != "object" then
                 "artifacts[\($index)] must be an object"
               else
-                ($artifact | keys - ["path", "package_identity_file"]) as $artifact_unknown
+                ($artifact | keys - ["path", "package_identity_file", "dependency_sbom", "attestation_bundle"]) as $artifact_unknown
                 | if ($artifact_unknown | length) > 0 then
                     "artifacts[\($index)] has unknown field(s): " + ($artifact_unknown | join(", "))
                   else empty end,
                   if ($artifact.path | relative_path) then empty
                   else "artifacts[\($index)].path must be a non-empty relative path without parent traversal" end,
                   ($artifact | to_entries[]
-                    | select(.key == "package_identity_file")
+                    | select(.key == "package_identity_file" or .key == "dependency_sbom" or .key == "attestation_bundle")
                     | select((.value | relative_path) | not)
-                    | "artifacts[\($index)].\(.key) must be a non-empty relative path without parent traversal")
+                    | "artifacts[\($index)].\(.key) must be a non-empty relative path without parent traversal"),
+                  if (($artifact | has("dependency_sbom")) != ($artifact | has("attestation_bundle"))) then
+                    "artifacts[\($index)] dependency_sbom and attestation_bundle must be supplied together"
+                  else empty end
               end
           ]
         else [] end

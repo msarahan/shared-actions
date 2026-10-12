@@ -1,0 +1,39 @@
+name: Admit candidate container inputs
+description: Check canonical train identity and complete immutable image coverage before starting build containers.
+inputs:
+  train-sha256:
+    description: Exact immutable train digest.
+    required: true
+  caller-images:
+    description: Optional caller image map; must match the reviewed train.
+    default: '{}'
+  matrix:
+    description: Build matrix with include entries.
+    default: '{}'
+  image-family:
+    description: ci-conda or ci-wheel for matrix builds.
+    default: ''
+  custom-image:
+    description: Image name used by a custom job.
+    default: ''
+outputs:
+  images:
+    description: Validated map of all train image names to immutable registry digests.
+    value: ${{ steps.validate.outputs.images }}
+runs:
+  using: composite
+  steps:
+    - id: validate
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        TRAIN_SHA256: ${{ inputs.train-sha256 }}
+        CALLER_IMAGES: ${{ inputs.caller-images }}
+        BUILD_MATRIX: ${{ inputs.matrix }}
+        IMAGE_FAMILY: ${{ inputs.image-family }}
+        CUSTOM_IMAGE: ${{ inputs.custom-image }}
+        TRAIN_FILE: ${{ runner.temp }}/candidate-image-train.json
+      run: |
+        [[ "${TRAIN_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+        aws s3 cp "s3://rapids-release-candidates/train-state/${TRAIN_SHA256}/release-train.json" "${TRAIN_FILE}"
+        python "${ACTION_PATH}/validate.py"
